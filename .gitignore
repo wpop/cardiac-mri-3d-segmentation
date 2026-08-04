@@ -1,0 +1,107 @@
+# Python bytecode and cache directories
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Compiled Python extensions
+*.so
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Static analysis and linting
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# TensorBoard
+runs/
+
+# Environment and local configuration
+.env
+.env.*
+!.env.example
+
+# Raw and processed medical datasets
+data/raw/*
+!data/raw/acdc/
+data/raw/acdc/*
+!data/raw/acdc/.gitkeep
+
+data/processed/
+data/cache/
+
+# Generated dataset splits
+data/splits/*.json
+
+# Generated project artifacts
+artifacts/*
+!artifacts/dataset_inspection/
+artifacts/dataset_inspection/*
+!artifacts/dataset_inspection/.gitkeep
+
+# Model checkpoints and exported models
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+
+# Medical image files
+*.nii
+*.nii.gz
+*.dcm
+*.mha
+*.mhd
+*.nrrd
+
+# Generated tables and reports
+*.csv
+*.xlsx
+
+# Generated images and videos
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+
+# Temporary files
+tmp/
+temp/
+.cache/

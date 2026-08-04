@@ -1,0 +1,20 @@
+dataset:
+  name: "ACDC"
+  root_dir: "data/raw/acdc"
+
+inspection:
+  output_dir: "artifacts/dataset_inspection"
+  report_filename: "dataset_report.json"
+  summary_filename: "patient_summary.csv"
+  visualizations_dirname: "representative_visualizations"
+
+validation:
+  expected_labels:
+    - 0
+    - 1
+    - 2
+    - 3
+  affine_absolute_tolerance: 1.0e-5
+  require_finite_intensities: true
+  require_positive_voxel_spacing: true
+  
