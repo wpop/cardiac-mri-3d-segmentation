@@ -2,23 +2,29 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 import yaml
 
 from cardiac_segmentation.config.app_config import AppConfig
 from cardiac_segmentation.config.dataset_config import DatasetConfig
 from cardiac_segmentation.config.inspection_config import InspectionConfig
+from cardiac_segmentation.config.preprocessing_config import (
+    PreprocessingConfig,
+)
 from cardiac_segmentation.config.validation_config import ValidationConfig
+
+_SPATIAL_DIMENSION_COUNT: Final[int] = 3
 
 
 class AppConfigLoader:
-    """Load and validate the dataset inspection configuration from YAML."""
+    """Load and validate the complete application configuration from YAML."""
 
     _ROOT_KEYS = frozenset(
         {
             "dataset",
             "inspection",
+            "preprocessing",
             "validation",
         }
     )
@@ -48,6 +54,16 @@ class AppConfigLoader:
         }
     )
 
+    _PREPROCESSING_KEYS = frozenset(
+        {
+            "target_spacing_mm",
+            "target_shape",
+            "intensity_lower_percentile",
+            "intensity_upper_percentile",
+            "normalize_nonzero_only",
+        }
+    )
+
     def __init__(self, project_root: Path) -> None:
         """Initialize the loader with an explicit project root directory."""
         resolved_project_root = project_root.expanduser().resolve()
@@ -74,14 +90,19 @@ class AppConfigLoader:
         dataset_section = self._require_section(root, "dataset")
         inspection_section = self._require_section(root, "inspection")
         validation_section = self._require_section(root, "validation")
+        preprocessing_section = self._require_section(root, "preprocessing")
 
         return AppConfig(
             dataset=self._build_dataset_config(dataset_section),
             inspection=self._build_inspection_config(inspection_section),
             validation=self._build_validation_config(validation_section),
+            preprocessing=self._build_preprocessing_config(
+                preprocessing_section
+            ),
         )
 
     def _resolve_config_path(self, config_path: Path) -> Path:
+        """Resolve a configuration path relative to the project root."""
         candidate = config_path.expanduser()
 
         if not candidate.is_absolute():
@@ -96,6 +117,7 @@ class AppConfigLoader:
 
     @staticmethod
     def _read_yaml(config_path: Path) -> object:
+        """Read and parse a YAML configuration file."""
         try:
             file_content = config_path.read_text(encoding="utf-8")
         except OSError as error:
@@ -108,6 +130,7 @@ class AppConfigLoader:
 
     @staticmethod
     def _require_mapping(value: object, *, context: str) -> dict[str, object]:
+        """Require a YAML mapping with string keys."""
         if not isinstance(value, Mapping):
             raise TypeError(f"{context} must be a YAML mapping.")
 
@@ -127,6 +150,7 @@ class AppConfigLoader:
         root: Mapping[str, object],
         section_name: str,
     ) -> dict[str, object]:
+        """Read a required top-level configuration section."""
         if section_name not in root:
             raise ValueError(f"Missing required configuration section: {section_name}")
 
@@ -142,6 +166,7 @@ class AppConfigLoader:
         expected_keys: frozenset[str],
         context: str,
     ) -> None:
+        """Validate strict configuration keys for one mapping."""
         actual_keys = set(section)
         missing_keys = expected_keys - actual_keys
         unknown_keys = actual_keys - expected_keys
@@ -158,6 +183,7 @@ class AppConfigLoader:
         self,
         section: Mapping[str, object],
     ) -> DatasetConfig:
+        """Build the validated dataset configuration section."""
         self._validate_keys(
             section,
             expected_keys=self._DATASET_KEYS,
@@ -180,6 +206,7 @@ class AppConfigLoader:
         self,
         section: Mapping[str, object],
     ) -> InspectionConfig:
+        """Build the validated inspection configuration section."""
         self._validate_keys(
             section,
             expected_keys=self._INSPECTION_KEYS,
@@ -215,6 +242,7 @@ class AppConfigLoader:
         self,
         section: Mapping[str, object],
     ) -> ValidationConfig:
+        """Build the validated metadata validation configuration section."""
         self._validate_keys(
             section,
             expected_keys=self._VALIDATION_KEYS,
@@ -244,7 +272,47 @@ class AppConfigLoader:
             ),
         )
 
+    def _build_preprocessing_config(
+        self,
+        section: Mapping[str, object],
+    ) -> PreprocessingConfig:
+        """Build the validated preprocessing configuration section."""
+        self._validate_keys(
+            section,
+            expected_keys=self._PREPROCESSING_KEYS,
+            context="Preprocessing configuration",
+        )
+
+        return PreprocessingConfig(
+            target_spacing_mm=self._require_float_triplet(
+                section,
+                "target_spacing_mm",
+                context="Preprocessing configuration",
+            ),
+            target_shape=self._require_integer_triplet(
+                section,
+                "target_shape",
+                context="Preprocessing configuration",
+            ),
+            intensity_lower_percentile=self._require_float(
+                section,
+                "intensity_lower_percentile",
+                context="Preprocessing configuration",
+            ),
+            intensity_upper_percentile=self._require_float(
+                section,
+                "intensity_upper_percentile",
+                context="Preprocessing configuration",
+            ),
+            normalize_nonzero_only=self._require_bool(
+                section,
+                "normalize_nonzero_only",
+                context="Preprocessing configuration",
+            ),
+        )
+
     def _resolve_project_path(self, path_value: str) -> Path:
+        """Resolve a configured path relative to the project root."""
         candidate = Path(path_value).expanduser()
 
         if not candidate.is_absolute():
@@ -259,6 +327,7 @@ class AppConfigLoader:
         *,
         context: str,
     ) -> str:
+        """Require a non-empty string value from a configuration section."""
         value = section[key]
 
         if not isinstance(value, str):
@@ -278,6 +347,7 @@ class AppConfigLoader:
         *,
         context: str,
     ) -> bool:
+        """Require a boolean value from a configuration section."""
         value = section[key]
 
         if not isinstance(value, bool):
@@ -292,6 +362,7 @@ class AppConfigLoader:
         *,
         context: str,
     ) -> float:
+        """Require a numeric value and return it as a float."""
         value = section[key]
 
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -306,6 +377,7 @@ class AppConfigLoader:
         *,
         context: str,
     ) -> tuple[int, ...]:
+        """Require an arbitrary-length YAML list of integer values."""
         value = section[key]
 
         if not isinstance(value, list):
@@ -322,3 +394,73 @@ class AppConfigLoader:
             result.append(item)
 
         return tuple(result)
+
+    @staticmethod
+    def _require_float_triplet(
+        section: Mapping[str, object],
+        key: str,
+        *,
+        context: str,
+    ) -> tuple[float, float, float]:
+        """Require an exact three-item YAML list of numeric values."""
+        value = section[key]
+
+        if not isinstance(value, list):
+            raise TypeError(f"{context} key '{key}' must be a YAML list.")
+
+        if len(value) != _SPATIAL_DIMENSION_COUNT:
+            raise ValueError(
+                f"{context} key '{key}' must contain exactly three values."
+            )
+
+        result: list[float] = []
+
+        for index, item in enumerate(value):
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise TypeError(
+                    f"{context} key '{key}' item at index {index} "
+                    "must be a number."
+                )
+
+            result.append(float(item))
+
+        return (
+            result[0],
+            result[1],
+            result[2],
+        )
+
+    @staticmethod
+    def _require_integer_triplet(
+        section: Mapping[str, object],
+        key: str,
+        *,
+        context: str,
+    ) -> tuple[int, int, int]:
+        """Require an exact three-item YAML list of integer values."""
+        value = section[key]
+
+        if not isinstance(value, list):
+            raise TypeError(f"{context} key '{key}' must be a YAML list.")
+
+        if len(value) != _SPATIAL_DIMENSION_COUNT:
+            raise ValueError(
+                f"{context} key '{key}' must contain exactly three values."
+            )
+
+        result: list[int] = []
+
+        for index, item in enumerate(value):
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise TypeError(
+                    f"{context} key '{key}' item at index {index} "
+                    "must be an integer."
+                )
+
+            result.append(item)
+
+        return (
+            result[0],
+            result[1],
+            result[2],
+        )

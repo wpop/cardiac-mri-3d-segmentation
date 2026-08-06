@@ -2,6 +2,7 @@ from cardiac_segmentation.config.app_config import AppConfig
 from cardiac_segmentation.config.dataset_config import DatasetConfig
 from cardiac_segmentation.config.inspection_config import InspectionConfig
 from cardiac_segmentation.config.loader import AppConfigLoader
+from cardiac_segmentation.config.preprocessing_config import PreprocessingConfig
 from cardiac_segmentation.config.validation_config import ValidationConfig
 
 __all__ = [
@@ -9,5 +10,6 @@ __all__ = [
     "AppConfigLoader",
     "DatasetConfig",
     "InspectionConfig",
+    "PreprocessingConfig",
     "ValidationConfig",
 ]

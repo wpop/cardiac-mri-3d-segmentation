@@ -17,4 +17,16 @@ validation:
   affine_absolute_tolerance: 1.0e-5
   require_finite_intensities: true
   require_positive_voxel_spacing: true
-  
+
+preprocessing:
+  target_spacing_mm:
+    - 1.5
+    - 1.5
+    - 5.0
+  target_shape:
+    - 192
+    - 192
+    - 24
+  intensity_lower_percentile: 1.0
+  intensity_upper_percentile: 99.0
+  normalize_nonzero_only: true
