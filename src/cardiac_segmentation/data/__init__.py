@@ -23,6 +23,10 @@ from cardiac_segmentation.data.acdc_patient_inspection_record import (
 from cardiac_segmentation.data.acdc_phase_inspection_record import (
     AcdcPhaseInspectionRecord,
 )
+from cardiac_segmentation.data.acdc_phase_sample import AcdcPhaseSample
+from cardiac_segmentation.data.acdc_segmentation_dataset import (
+    AcdcSegmentationDataset,
+)
 from cardiac_segmentation.data.nifti_geometry_validator import (
     NiftiGeometryValidator,
 )
@@ -54,6 +58,8 @@ __all__ = [
     "AcdcPatientInfo",
     "AcdcPatientInspectionRecord",
     "AcdcPhaseInspectionRecord",
+    "AcdcPhaseSample",
+    "AcdcSegmentationDataset",
     "NiftiGeometryValidator",
     "NiftiMaskLabelValidator",
     "NiftiMaskStatistics",
