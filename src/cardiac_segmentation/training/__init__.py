@@ -11,6 +11,9 @@ from cardiac_segmentation.training.segmentation_training_epoch_record import (
 from cardiac_segmentation.training.segmentation_training_history import (
     SegmentationTrainingHistory,
 )
+from cardiac_segmentation.training.single_patient_overfit_experiment import (
+    SinglePatientOverfitExperiment,
+)
 
 __all__ = [
     "SegmentationEpochResult",
@@ -18,4 +21,5 @@ __all__ = [
     "SegmentationTrainer",
     "SegmentationTrainingEpochRecord",
     "SegmentationTrainingHistory",
+    "SinglePatientOverfitExperiment",
 ]
