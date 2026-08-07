@@ -43,10 +43,7 @@ class NiftiImageMaskPairResampler:
     ) -> ResampledImageMaskPair:
         """Return an in-memory pair resampled to the configured voxel spacing."""
         target_shape = self._calculate_target_shape(pair)
-        source_affine = np.asarray(
-            pair.image_metadata.affine,
-            dtype=np.float64,
-        )
+        source_affine = self._calculate_spacing_consistent_source_affine(pair)
         rescale_affine = cast(
             Callable[
                 [
@@ -206,17 +203,54 @@ class NiftiImageMaskPairResampler:
         target_affine: NDArray[np.float64],
     ) -> tuple[float, float, float]:
         """Calculate voxel spacing from the target affine matrix."""
-        voxel_sizes = cast(
-            Callable[[NDArray[np.float64]], NDArray[np.float64]],
-            affines.voxel_sizes,
-        )
-        spacing = voxel_sizes(target_affine)
+        spacing = self._calculate_affine_spacing(target_affine)
 
         return (
             float(spacing[0]),
             float(spacing[1]),
             float(spacing[2]),
         )
+
+    def _calculate_spacing_consistent_source_affine(
+        self,
+        pair: NiftiImageMaskPair,
+    ) -> NDArray[np.float64]:
+        """Scale source affine directions to match header voxel spacing."""
+        source_affine = np.asarray(
+            pair.image_metadata.affine,
+            dtype=np.float64,
+        )
+        affine_spacing = self._calculate_affine_spacing(source_affine)
+
+        if any(
+            not isfinite(spacing) or spacing <= 0.0
+            for spacing in affine_spacing
+        ):
+            raise ValueError("Source affine voxel spacing must be finite and positive.")
+
+        spacing_scale = (
+            np.asarray(pair.image_metadata.voxel_spacing, dtype=np.float64)
+            / affine_spacing
+        )
+        spacing_consistent_affine = source_affine.copy()
+        spacing_consistent_affine[:3, :3] = (
+            spacing_consistent_affine[:3, :3]
+            @ np.diag(spacing_scale)
+        )
+
+        return spacing_consistent_affine
+
+    def _calculate_affine_spacing(
+        self,
+        affine_matrix: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Calculate voxel spacing from an affine matrix."""
+        voxel_sizes = cast(
+            Callable[[NDArray[np.float64]], NDArray[np.float64]],
+            affines.voxel_sizes,
+        )
+
+        return voxel_sizes(affine_matrix)
 
     def _validate_output_spacing(
         self,

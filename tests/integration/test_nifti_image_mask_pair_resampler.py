@@ -132,7 +132,7 @@ def _assert_resampled_pair_matches_policy(
     assert np.allclose(
         _calculate_world_space_center(
             shape=source_pair.image_metadata.shape,
-            affine_matrix=source_pair.image_metadata.affine,
+            affine_matrix=_calculate_spacing_consistent_affine(source_pair),
         ),
         _calculate_world_space_center(
             shape=resampled_pair.shape,
@@ -140,6 +140,33 @@ def _assert_resampled_pair_matches_policy(
         ),
         atol=_CENTER_ABSOLUTE_TOLERANCE,
         rtol=0.0,
+    )
+
+
+def _calculate_spacing_consistent_affine(
+    source_pair: NiftiImageMaskPair,
+) -> AffineMatrix:
+    """Scale source affine directions to match header voxel spacing."""
+    source_affine = np.asarray(
+        source_pair.image_metadata.affine,
+        dtype=np.float64,
+    )
+    voxel_sizes = cast(
+        Callable[[np.ndarray], np.ndarray],
+        nib.affines.voxel_sizes,
+    )
+    spacing_scale = (
+        np.asarray(source_pair.image_metadata.voxel_spacing, dtype=np.float64)
+        / voxel_sizes(source_affine)
+    )
+    source_affine[:3, :3] = source_affine[:3, :3] @ np.diag(spacing_scale)
+
+    return cast(
+        AffineMatrix,
+        tuple(
+            tuple(float(value) for value in row)
+            for row in source_affine
+        ),
     )
 
 
