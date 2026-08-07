@@ -5,6 +5,7 @@ import json
 import random
 import statistics
 from collections.abc import Iterable, Mapping, Sized
+from math import isinf
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -27,7 +28,7 @@ from cardiac_segmentation.evaluation.validation_inference_case_result import (
 from cardiac_segmentation.evaluation.validation_inference_report import (
     ValidationInferenceReport,
 )
-from cardiac_segmentation.metrics import MulticlassDiceMetric3D
+from cardiac_segmentation.metrics import BinaryHD95Metric3D, MulticlassDiceMetric3D
 from cardiac_segmentation.models import CompactUNet3D
 from cardiac_segmentation.training import SegmentationTrainingCheckpointLoader
 
@@ -40,8 +41,18 @@ _CSV_FIELDNAMES: Final[tuple[str, ...]] = (
     "myocardium_dice",
     "lv_dice",
     "mean_foreground_dice",
+    "rv_hd95_mm",
+    "myocardium_hd95_mm",
+    "lv_hd95_mm",
+    "mean_foreground_hd95_mm",
 )
 _FOREGROUND_LABELS: Final[tuple[int, int, int]] = (1, 2, 3)
+_PREPROCESSING_TARGET_SPACING_XYZ_MM: Final[tuple[float, float, float]] = (1.5, 1.5, 5.0)
+_HD95_SPACING_DHW_MM: Final[tuple[float, float, float]] = (
+    _PREPROCESSING_TARGET_SPACING_XYZ_MM[2],
+    _PREPROCESSING_TARGET_SPACING_XYZ_MM[1],
+    _PREPROCESSING_TARGET_SPACING_XYZ_MM[0],
+)
 
 
 class ValidationInferenceExperiment:
@@ -146,6 +157,7 @@ class ValidationInferenceExperiment:
                     case_result = self._calculate_case_result(
                         logits=logits[batch_index : batch_index + 1],
                         mask=masks[batch_index : batch_index + 1],
+                        prediction=predictions[batch_index],
                         patient_id=patient_id,
                         volume_id=volume_id,
                     )
@@ -168,10 +180,11 @@ class ValidationInferenceExperiment:
         *,
         logits: Tensor,
         mask: Tensor,
+        prediction: Tensor,
         patient_id: str,
         volume_id: str,
     ) -> ValidationInferenceCaseResult:
-        """Calculate foreground Dice values for one validation volume."""
+        """Calculate foreground Dice and HD95 values for one validation volume."""
         metric = MulticlassDiceMetric3D(
             num_classes=len(self._app_config.validation.expected_labels),
             include_background=False,
@@ -179,6 +192,11 @@ class ValidationInferenceExperiment:
         metric.update(logits, mask)
         dice_result = metric.compute()
         rv_dice, myocardium_dice, lv_dice = dice_result.per_class_dice
+        hd95_result = self._calculate_foreground_hd95(
+            prediction=prediction,
+            mask=mask[0],
+        )
+        rv_hd95_mm, myocardium_hd95_mm, lv_hd95_mm = hd95_result
 
         return ValidationInferenceCaseResult(
             patient_id=patient_id,
@@ -187,7 +205,45 @@ class ValidationInferenceExperiment:
             myocardium_dice=myocardium_dice,
             lv_dice=lv_dice,
             mean_foreground_dice=dice_result.mean_dice,
+            rv_hd95_mm=rv_hd95_mm,
+            myocardium_hd95_mm=myocardium_hd95_mm,
+            lv_hd95_mm=lv_hd95_mm,
+            mean_foreground_hd95_mm=self._calculate_mean_foreground_hd95(hd95_result),
         )
+
+    @staticmethod
+    def _calculate_foreground_hd95(
+        *,
+        prediction: Tensor,
+        mask: Tensor,
+    ) -> tuple[float, float, float]:
+        """Calculate per-class HD95 using tensor [D,H,W] spacing in millimeters."""
+        hd95_metric = BinaryHD95Metric3D(spacing_mm_dhw=_HD95_SPACING_DHW_MM)
+        prediction_array = prediction.detach().cpu().numpy()
+        mask_array = mask.detach().cpu().numpy()
+        hd95_values = [
+            hd95_metric.compute(
+                ground_truth_mask=mask_array == label,
+                prediction_mask=prediction_array == label,
+            )
+            for label in _FOREGROUND_LABELS
+        ]
+
+        return (
+            hd95_values[0],
+            hd95_values[1],
+            hd95_values[2],
+        )
+
+    @staticmethod
+    def _calculate_mean_foreground_hd95(
+        hd95_values_mm: tuple[float, float, float],
+    ) -> float:
+        """Return mean foreground HD95, preserving infinity if any class is infinite."""
+        if any(isinf(value) for value in hd95_values_mm):
+            return float("inf")
+
+        return statistics.fmean(hd95_values_mm)
 
     def _write_csv(
         self,
@@ -210,6 +266,12 @@ class ValidationInferenceExperiment:
                         "myocardium_dice": f"{result.myocardium_dice:.12f}",
                         "lv_dice": f"{result.lv_dice:.12f}",
                         "mean_foreground_dice": f"{result.mean_foreground_dice:.12f}",
+                        "rv_hd95_mm": f"{result.rv_hd95_mm:.12f}",
+                        "myocardium_hd95_mm": f"{result.myocardium_hd95_mm:.12f}",
+                        "lv_hd95_mm": f"{result.lv_hd95_mm:.12f}",
+                        "mean_foreground_hd95_mm": (
+                            f"{result.mean_foreground_hd95_mm:.12f}"
+                        ),
                     }
                 )
 
@@ -238,6 +300,20 @@ class ValidationInferenceExperiment:
             },
             "mean_foreground_dice": self._aggregate(
                 result.mean_foreground_dice for result in case_results
+            ),
+            "per_class_hd95_mm": {
+                "rv_hd95_mm": self._aggregate(
+                    result.rv_hd95_mm for result in case_results
+                ),
+                "myocardium_hd95_mm": self._aggregate(
+                    result.myocardium_hd95_mm for result in case_results
+                ),
+                "lv_hd95_mm": self._aggregate(
+                    result.lv_hd95_mm for result in case_results
+                ),
+            },
+            "mean_foreground_hd95_mm": self._aggregate(
+                result.mean_foreground_hd95_mm for result in case_results
             ),
             "worst_volume_identifier": sorted_results[0].volume_id,
             "middle_volume_identifier": middle_result.volume_id,
