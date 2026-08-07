@@ -5,13 +5,17 @@ from typing import Final, cast
 import nibabel as nib
 import numpy as np
 import pytest
+import torch
 from numpy.typing import NDArray
+from torch import Tensor
 
 from cardiac_segmentation.config.app_config import AppConfig
 from cardiac_segmentation.config.loader import AppConfigLoader
 from cardiac_segmentation.data import (
     AcdcDatasetIndexer,
     AcdcInfoParser,
+    AcdcPatientCase,
+    AcdcSegmentationDataset,
     NiftiMetadataReader,
 )
 from cardiac_segmentation.data.nifti_volume_metadata import AffineMatrix
@@ -26,6 +30,12 @@ from cardiac_segmentation.preprocessing import (
 _PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 _CONFIG_PATH: Final[Path] = Path("configs/data.yaml")
 _AFFINE_ABSOLUTE_TOLERANCE: Final[float] = 1e-5
+_FOREGROUND_LABELS: Final[tuple[int, int, int]] = (1, 2, 3)
+_PATIENT070_RAW_ES_COUNTS: Final[dict[int, int]] = {
+    1: 1510,
+    2: 3676,
+    3: 1378,
+}
 
 
 @pytest.mark.acdc
@@ -59,6 +69,79 @@ def test_center_crop_pad_one_real_acdc_pair_to_target_shape() -> None:
         transformed_pair=transformed_pair,
         config=config,
     )
+
+
+@pytest.mark.acdc
+@pytest.mark.integration
+def test_center_crop_pad_preserves_real_acdc_foreground_labels() -> None:
+    """Verify crop/pad preserves resampled foreground for real training phases."""
+    config = AppConfigLoader(
+        project_root=_PROJECT_ROOT,
+    ).load(_CONFIG_PATH)
+    patient_cases = tuple(
+        patient_case
+        for patient_case in AcdcDatasetIndexer(
+            dataset_root=config.dataset.root_dir,
+            info_parser=AcdcInfoParser(),
+        ).index()
+        if patient_case.split_name == "training"
+    )
+    loader = NiftiImageMaskPairLoader(
+        expected_labels=config.validation.expected_labels,
+        affine_absolute_tolerance=config.validation.affine_absolute_tolerance,
+        require_finite_intensities=config.validation.require_finite_intensities,
+    )
+    resampler = NiftiImageMaskPairResampler(
+        target_spacing_mm=config.preprocessing.target_spacing_mm,
+        expected_labels=config.validation.expected_labels,
+    )
+    crop_padder = NiftiImageMaskPairCenterCropPadder(
+        target_shape=config.preprocessing.target_shape,
+        expected_labels=config.validation.expected_labels,
+    )
+
+    patient070_case = _select_training_case_by_patient_id(
+        patient_cases=patient_cases,
+        patient_id="patient070",
+    )
+
+    for patient_case in patient_cases:
+        for phase_name, image_path, mask_path in _iter_phase_paths(patient_case):
+            loaded_pair = loader.load(
+                image_path=image_path,
+                mask_path=mask_path,
+            )
+            resampled_pair = resampler.resample(loaded_pair)
+            transformed_pair = crop_padder.transform(resampled_pair)
+
+            _assert_crop_pad_preserves_existing_foreground(
+                resampled_counts=_count_labels(resampled_pair.mask_data),
+                transformed_counts=_count_labels(transformed_pair.mask_data),
+            )
+
+            if patient_case == patient070_case and phase_name == "ES":
+                raw_counts = _count_labels(loaded_pair.mask_data)
+                resampled_counts = _count_labels(resampled_pair.mask_data)
+                transformed_counts = _count_labels(transformed_pair.mask_data)
+                _assert_patient070_es_stage_counts(
+                    config=config,
+                    patient_case=patient070_case,
+                    stage_counts=(
+                        raw_counts,
+                        resampled_counts,
+                        transformed_counts,
+                    ),
+                    rv_physical_volumes=(
+                        _calculate_physical_volume_mm3(
+                            voxel_count=raw_counts[1],
+                            voxel_spacing=loaded_pair.image_metadata.voxel_spacing,
+                        ),
+                        _calculate_physical_volume_mm3(
+                            voxel_count=resampled_counts[1],
+                            voxel_spacing=resampled_pair.voxel_spacing,
+                        ),
+                    ),
+                )
 
 
 def _select_crop_and_pad_candidate(config: AppConfig) -> tuple[Path, Path]:
@@ -98,6 +181,71 @@ def _select_crop_and_pad_candidate(config: AppConfig) -> tuple[Path, Path]:
     raise AssertionError(
         "Unable to find a real ACDC phase requiring both crop and padding."
     )
+
+
+def _select_training_case_by_patient_id(
+    patient_cases: tuple[AcdcPatientCase, ...],
+    patient_id: str,
+) -> AcdcPatientCase:
+    """Return one real training patient case by identifier."""
+    return next(
+        patient_case
+        for patient_case in patient_cases
+        if patient_case.patient_id == patient_id
+    )
+
+
+def _iter_phase_paths(
+    patient_case: AcdcPatientCase,
+) -> tuple[tuple[str, Path, Path], tuple[str, Path, Path]]:
+    """Return ED and ES image/mask paths for one patient case."""
+    return (
+        (
+            "ED",
+            patient_case.ed_image_path,
+            patient_case.ed_mask_path,
+        ),
+        (
+            "ES",
+            patient_case.es_image_path,
+            patient_case.es_mask_path,
+        ),
+    )
+
+
+def _assert_crop_pad_preserves_existing_foreground(
+    resampled_counts: dict[int, int],
+    transformed_counts: dict[int, int],
+) -> None:
+    """Verify crop/pad keeps every foreground class present after resampling."""
+    for label in _FOREGROUND_LABELS:
+        if resampled_counts[label] > 0:
+            assert transformed_counts[label] == resampled_counts[label]
+
+
+def _assert_patient070_es_stage_counts(
+    config: AppConfig,
+    patient_case: AcdcPatientCase,
+    stage_counts: tuple[dict[int, int], dict[int, int], dict[int, int]],
+    rv_physical_volumes: tuple[float, float],
+) -> None:
+    """Verify the foreground-preservation regression for patient070 ES."""
+    dataset = AcdcSegmentationDataset(
+        patient_cases=(patient_case,),
+        preprocessing_config=config.preprocessing,
+        validation_config=config.validation,
+    )
+    dataset_item = dataset[1]
+    dataset_mask = _require_tensor(dataset_item["mask"])
+    dataset_counts = _count_tensor_labels(dataset_mask)
+    raw_counts, resampled_counts, transformed_counts = stage_counts
+    raw_rv_volume, resampled_rv_volume = rv_physical_volumes
+
+    assert raw_counts == _PATIENT070_RAW_ES_COUNTS
+    assert resampled_rv_volume == pytest.approx(raw_rv_volume, rel=0.10)
+    assert transformed_counts[1] == resampled_counts[1]
+    assert dataset_counts[1] == transformed_counts[1]
+    assert set(torch.unique(dataset_mask).tolist()) == set(config.validation.expected_labels)
 
 
 def _assert_transformed_pair_matches_policy(
@@ -151,6 +299,38 @@ def _assert_transformed_pair_matches_policy(
         resampled_pair=resampled_pair,
         transformed_pair=transformed_pair,
     )
+
+
+def _count_labels(mask_data: NDArray[np.int64]) -> dict[int, int]:
+    """Count foreground label voxels in a mask array."""
+    return {
+        label: int(np.count_nonzero(mask_data == label))
+        for label in _FOREGROUND_LABELS
+    }
+
+
+def _calculate_physical_volume_mm3(
+    voxel_count: int,
+    voxel_spacing: tuple[float, float, float],
+) -> float:
+    """Calculate physical volume from voxel count and spacing."""
+    return float(voxel_count * np.prod(np.asarray(voxel_spacing, dtype=np.float64)))
+
+
+def _count_tensor_labels(mask_tensor: Tensor) -> dict[int, int]:
+    """Count foreground label voxels in a mask tensor."""
+    return {
+        label: int(torch.count_nonzero(mask_tensor == label).item())
+        for label in _FOREGROUND_LABELS
+    }
+
+
+def _require_tensor(value: Tensor | str) -> Tensor:
+    """Return a dataset item value as a tensor."""
+    if not isinstance(value, Tensor):
+        raise TypeError("Dataset item value must be a tensor.")
+
+    return value
 
 
 def _calculate_resampled_shape(
