@@ -1,3 +1,6 @@
+from cardiac_segmentation.training.patient_level_training_experiment import (
+    PatientLevelTrainingExperiment,
+)
 from cardiac_segmentation.training.segmentation_epoch_result import (
     SegmentationEpochResult,
 )
@@ -16,6 +19,7 @@ from cardiac_segmentation.training.single_patient_overfit_experiment import (
 )
 
 __all__ = [
+    "PatientLevelTrainingExperiment",
     "SegmentationEpochResult",
     "SegmentationEpochRunner",
     "SegmentationTrainer",
