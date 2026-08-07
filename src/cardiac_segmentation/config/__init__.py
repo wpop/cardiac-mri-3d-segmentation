@@ -22,6 +22,12 @@ from cardiac_segmentation.config.single_patient_overfit_config_loader import (
     SinglePatientOverfitConfigLoader,
 )
 from cardiac_segmentation.config.validation_config import ValidationConfig
+from cardiac_segmentation.config.validation_inference_config import (
+    ValidationInferenceConfig,
+)
+from cardiac_segmentation.config.validation_inference_config_loader import (
+    ValidationInferenceConfigLoader,
+)
 
 __all__ = [
     "AppConfig",
@@ -36,4 +42,6 @@ __all__ = [
     "SinglePatientOverfitConfig",
     "SinglePatientOverfitConfigLoader",
     "ValidationConfig",
+    "ValidationInferenceConfig",
+    "ValidationInferenceConfigLoader",
 ]
