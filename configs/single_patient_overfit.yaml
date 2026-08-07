@@ -1,0 +1,12 @@
+single_patient_overfit:
+  patient_id: patient001
+  epoch_count: 30
+  batch_size: 1
+  num_workers: 0
+  pin_memory: true
+  random_seed: 42
+  base_channels: 8
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  device: auto
+  checkpoint_path: artifacts/checkpoints/single_patient_overfit.pt
