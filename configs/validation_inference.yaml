@@ -1,0 +1,13 @@
+validation_inference:
+  patient_count: 100
+  validation_fraction: 0.2
+  batch_size: 1
+  num_workers: 0
+  pin_memory: true
+  random_seed: 42
+  base_channels: 8
+  device: auto
+  checkpoint_path: artifacts/checkpoints/full_patient_level_training.pt
+  csv_report_path: artifacts/reports/validation_inference.csv
+  json_report_path: artifacts/reports/validation_inference_summary.json
+  visualization_dir: artifacts/visualizations
