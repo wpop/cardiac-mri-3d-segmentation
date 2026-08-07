@@ -1,0 +1,14 @@
+patient_level_resume_training:
+  patient_count: 100
+  validation_fraction: 0.2
+  final_epoch_number: 50
+  batch_size: 1
+  num_workers: 0
+  pin_memory: true
+  random_seed: 42
+  base_channels: 8
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  device: auto
+  resume_checkpoint_path: artifacts/checkpoints/full_patient_level_training.pt
+  checkpoint_path: artifacts/checkpoints/full_patient_level_training.pt

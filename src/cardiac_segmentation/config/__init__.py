@@ -2,6 +2,12 @@ from cardiac_segmentation.config.app_config import AppConfig
 from cardiac_segmentation.config.dataset_config import DatasetConfig
 from cardiac_segmentation.config.inspection_config import InspectionConfig
 from cardiac_segmentation.config.loader import AppConfigLoader
+from cardiac_segmentation.config.patient_level_resume_training_config import (
+    PatientLevelResumeTrainingConfig,
+)
+from cardiac_segmentation.config.patient_level_resume_training_config_loader import (
+    PatientLevelResumeTrainingConfigLoader,
+)
 from cardiac_segmentation.config.patient_level_training_config import (
     PatientLevelTrainingConfig,
 )
@@ -22,6 +28,8 @@ __all__ = [
     "AppConfigLoader",
     "DatasetConfig",
     "InspectionConfig",
+    "PatientLevelResumeTrainingConfig",
+    "PatientLevelResumeTrainingConfigLoader",
     "PatientLevelTrainingConfig",
     "PatientLevelTrainingConfigLoader",
     "PreprocessingConfig",

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable, Sized
+from pathlib import Path
 
 import torch
 
-from cardiac_segmentation.config import AppConfig, PatientLevelTrainingConfig
+from cardiac_segmentation.config import AppConfig, PatientLevelResumeTrainingConfig
 from cardiac_segmentation.data import (
     AcdcDataLoaderFactory,
     AcdcDataLoaders,
@@ -15,29 +16,32 @@ from cardiac_segmentation.data import (
 )
 from cardiac_segmentation.losses import CrossEntropyDiceLoss3D
 from cardiac_segmentation.models import CompactUNet3D
+from cardiac_segmentation.training.resumed_segmentation_training_history import (
+    ResumedSegmentationTrainingHistory,
+)
 from cardiac_segmentation.training.segmentation_epoch_runner import (
     SegmentationEpochRunner,
 )
 from cardiac_segmentation.training.segmentation_trainer import SegmentationTrainer
+from cardiac_segmentation.training.segmentation_training_checkpoint_loader import (
+    SegmentationTrainingCheckpointLoader,
+)
 from cardiac_segmentation.training.segmentation_training_epoch_record import (
     SegmentationTrainingEpochRecord,
 )
-from cardiac_segmentation.training.segmentation_training_history import (
-    SegmentationTrainingHistory,
-)
 
 
-class PatientLevelTrainingExperiment:
-    """Run deterministic patient-level training on real ACDC training cases."""
+class PatientLevelResumeTrainingExperiment:
+    """Resume patient-level segmentation training on real ACDC training cases."""
 
     def __init__(
         self,
         app_config: AppConfig,
-        training_config: PatientLevelTrainingConfig,
+        resume_config: PatientLevelResumeTrainingConfig,
     ) -> None:
-        """Initialize device, selected cases, split summary, and volume counts."""
+        """Initialize device and deterministic patient split summary."""
         self._app_config = app_config
-        self._training_config = training_config
+        self._resume_config = resume_config
         self._device = self._resolve_device()
         self._selected_cases = self._select_training_cases()
         data_loaders = self._create_data_loaders()
@@ -49,7 +53,10 @@ class PatientLevelTrainingExperiment:
             patient_case.patient_id
             for patient_case in data_loaders.patient_split.validation_cases
         )
-        self._validate_disjoint_patient_ids()
+        self._validate_disjoint_patient_ids(
+            training_patient_ids=self._training_patient_ids,
+            validation_patient_ids=self._validation_patient_ids,
+        )
         self._training_volume_count = self._dataset_length(
             data_loaders.training_loader.dataset,
             context="Training",
@@ -84,11 +91,21 @@ class PatientLevelTrainingExperiment:
         """Return the number of validation ED/ES volumes."""
         return self._validation_volume_count
 
+    @property
+    def resume_checkpoint_path(self) -> Path:
+        """Return the checkpoint path used to resume training."""
+        return self._resume_config.resume_checkpoint_path
+
+    @property
+    def final_epoch_number(self) -> int:
+        """Return the configured final epoch number."""
+        return self._resume_config.final_epoch_number
+
     def run(
         self,
         epoch_callback: Callable[[SegmentationTrainingEpochRecord], None] | None = None,
-    ) -> SegmentationTrainingHistory:
-        """Train and validate on disjoint real ACDC training patients."""
+    ) -> ResumedSegmentationTrainingHistory:
+        """Resume training and return history for the newly completed epochs."""
         self._seed_random_generators()
         data_loaders = self._create_data_loaders()
         self._validate_fresh_data_loaders(data_loaders)
@@ -96,13 +113,25 @@ class PatientLevelTrainingExperiment:
         model = CompactUNet3D(
             in_channels=1,
             num_classes=class_count,
-            base_channels=self._training_config.base_channels,
+            base_channels=self._resume_config.base_channels,
         ).to(self._device)
         optimizer = torch.optim.AdamW(
             model.parameters(),
-            lr=self._training_config.learning_rate,
-            weight_decay=self._training_config.weight_decay,
+            lr=self._resume_config.learning_rate,
+            weight_decay=self._resume_config.weight_decay,
         )
+        checkpoint = SegmentationTrainingCheckpointLoader().load_into(
+            checkpoint_path=self._resume_config.resume_checkpoint_path,
+            model=model,
+            optimizer=optimizer,
+            device=self._device,
+        )
+
+        if checkpoint.epoch_number >= self._resume_config.final_epoch_number:
+            raise ValueError(
+                "Loaded checkpoint epoch must be lower than the final epoch number."
+            )
+
         epoch_runner = SegmentationEpochRunner(
             model=model,
             loss_function=CrossEntropyDiceLoss3D(
@@ -122,20 +151,21 @@ class PatientLevelTrainingExperiment:
             epoch_runner=epoch_runner,
         )
 
-        return trainer.fit(
+        return trainer.resume_fit(
             training_loader=data_loaders.training_loader,
             validation_loader=data_loaders.validation_loader,
-            epoch_count=self._training_config.epoch_count,
-            checkpoint_path=self._training_config.checkpoint_path,
+            checkpoint=checkpoint,
+            final_epoch_number=self._resume_config.final_epoch_number,
+            checkpoint_path=self._resume_config.checkpoint_path,
             epoch_callback=epoch_callback,
         )
 
     def _resolve_device(self) -> torch.device:
         """Resolve the configured execution device."""
-        if self._training_config.device == "cpu":
+        if self._resume_config.device == "cpu":
             return torch.device("cpu")
 
-        if self._training_config.device == "cuda":
+        if self._resume_config.device == "cuda":
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA was requested but is not available.")
 
@@ -157,13 +187,13 @@ class PatientLevelTrainingExperiment:
             for patient_case in patient_cases
             if patient_case.split_name == "training"
         )
-        selected_cases = training_cases[: self._training_config.patient_count]
+        selected_cases = training_cases[: self._resume_config.patient_count]
 
-        if len(selected_cases) != self._training_config.patient_count:
+        if len(selected_cases) != self._resume_config.patient_count:
             raise ValueError(
                 "ACDC training patient selection produced "
                 f"{len(selected_cases)} cases, but "
-                f"{self._training_config.patient_count} were required."
+                f"{self._resume_config.patient_count} were required."
             )
 
         return selected_cases
@@ -173,24 +203,12 @@ class PatientLevelTrainingExperiment:
         return AcdcDataLoaderFactory(
             preprocessing_config=self._app_config.preprocessing,
             validation_config=self._app_config.validation,
-            validation_fraction=self._training_config.validation_fraction,
-            random_seed=self._training_config.random_seed,
-            batch_size=self._training_config.batch_size,
-            num_workers=self._training_config.num_workers,
-            pin_memory=self._training_config.pin_memory,
+            validation_fraction=self._resume_config.validation_fraction,
+            random_seed=self._resume_config.random_seed,
+            batch_size=self._resume_config.batch_size,
+            num_workers=self._resume_config.num_workers,
+            pin_memory=self._resume_config.pin_memory,
         ).create(self._selected_cases)
-
-    def _validate_disjoint_patient_ids(self) -> None:
-        """Verify that training and validation patient identifiers do not overlap."""
-        overlapping_patient_ids = set(self._training_patient_ids) & set(
-            self._validation_patient_ids
-        )
-
-        if overlapping_patient_ids:
-            raise ValueError(
-                "Training and validation patient identifiers must be disjoint: "
-                f"{tuple(sorted(overlapping_patient_ids))}."
-            )
 
     def _validate_fresh_data_loaders(
         self,
@@ -212,8 +230,10 @@ class PatientLevelTrainingExperiment:
         if validation_patient_ids != self._validation_patient_ids:
             raise ValueError("Fresh validation patient identifiers changed before run.")
 
-        self._validate_disjoint_patient_ids()
-
+        self._validate_disjoint_patient_ids(
+            training_patient_ids=training_patient_ids,
+            validation_patient_ids=validation_patient_ids,
+        )
         training_volume_count = self._dataset_length(
             data_loaders.training_loader.dataset,
             context="Training",
@@ -236,6 +256,20 @@ class PatientLevelTrainingExperiment:
             )
 
     @staticmethod
+    def _validate_disjoint_patient_ids(
+        training_patient_ids: tuple[str, ...],
+        validation_patient_ids: tuple[str, ...],
+    ) -> None:
+        """Verify that training and validation patient identifiers do not overlap."""
+        overlapping_patient_ids = set(training_patient_ids) & set(validation_patient_ids)
+
+        if overlapping_patient_ids:
+            raise ValueError(
+                "Training and validation patient identifiers must be disjoint: "
+                f"{tuple(sorted(overlapping_patient_ids))}."
+            )
+
+    @staticmethod
     def _dataset_length(
         dataset: object,
         *,
@@ -249,8 +283,8 @@ class PatientLevelTrainingExperiment:
 
     def _seed_random_generators(self) -> None:
         """Seed Python and PyTorch random number generators."""
-        random.seed(self._training_config.random_seed)
-        torch.manual_seed(self._training_config.random_seed)
+        random.seed(self._resume_config.random_seed)
+        torch.manual_seed(self._resume_config.random_seed)
 
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(self._training_config.random_seed)
+            torch.cuda.manual_seed_all(self._resume_config.random_seed)
