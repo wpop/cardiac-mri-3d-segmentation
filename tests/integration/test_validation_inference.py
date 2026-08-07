@@ -1,7 +1,7 @@
 import csv
 import json
 from dataclasses import replace
-from math import isfinite
+from math import isfinite, isinf
 from pathlib import Path
 from typing import Any, Final
 
@@ -89,6 +89,10 @@ def test_validation_inference_uses_real_acdc_validation_split(
         _assert_normalized_dice(result.myocardium_dice)
         _assert_normalized_dice(result.lv_dice)
         _assert_normalized_dice(result.mean_foreground_dice)
+        _assert_hd95_value(result.rv_hd95_mm)
+        _assert_hd95_value(result.myocardium_hd95_mm)
+        _assert_hd95_value(result.lv_hd95_mm)
+        _assert_hd95_value(result.mean_foreground_hd95_mm)
 
     _assert_csv_matches_contract(inference_config.csv_report_path)
     _assert_json_matches_contract(inference_config.json_report_path)
@@ -106,13 +110,23 @@ def _assert_normalized_dice(
 def _assert_csv_matches_contract(
     csv_report_path: Path,
 ) -> None:
-    """Verify CSV exists and contains exactly two data rows."""
+    """Verify CSV exists and contains exactly two data rows with HD95 fields."""
     assert csv_report_path.is_file()
 
     with csv_report_path.open(encoding="utf-8", newline="") as csv_file:
         rows = tuple(csv.DictReader(csv_file))
 
     assert len(rows) == _VALIDATION_VOLUME_COUNT
+
+    for row in rows:
+        for field_name in (
+            "rv_hd95_mm",
+            "myocardium_hd95_mm",
+            "lv_hd95_mm",
+            "mean_foreground_hd95_mm",
+        ):
+            assert field_name in row
+            _assert_hd95_value(float(row[field_name]))
 
 
 def _assert_json_matches_contract(
@@ -125,11 +139,16 @@ def _assert_json_matches_contract(
     assert summary["validation_patient_count"] == _VALIDATION_PATIENT_COUNT
     assert summary["validation_volume_count"] == _VALIDATION_VOLUME_COUNT
     _assert_metric_summary(summary["mean_foreground_dice"])
+    _assert_hd95_summary(summary["mean_foreground_hd95_mm"])
 
     per_class = summary["per_class"]
     _assert_metric_summary(per_class["rv"])
     _assert_metric_summary(per_class["myocardium"])
     _assert_metric_summary(per_class["lv"])
+    per_class_hd95 = summary["per_class_hd95_mm"]
+    _assert_hd95_summary(per_class_hd95["rv_hd95_mm"])
+    _assert_hd95_summary(per_class_hd95["myocardium_hd95_mm"])
+    _assert_hd95_summary(per_class_hd95["lv_hd95_mm"])
     assert summary["worst_volume_identifier"]
     assert summary["middle_volume_identifier"]
     assert summary["best_volume_identifier"]
@@ -143,6 +162,24 @@ def _assert_metric_summary(
 
     for value in metric_summary.values():
         _assert_normalized_dice(value)
+
+
+def _assert_hd95_summary(
+    metric_summary: dict[str, Any],
+) -> None:
+    """Verify an aggregate HD95 summary has non-negative values or infinity."""
+    assert set(metric_summary) == {"mean", "median", "minimum", "maximum"}
+
+    for value in metric_summary.values():
+        _assert_hd95_value(value)
+
+
+def _assert_hd95_value(
+    value: float,
+) -> None:
+    """Verify HD95 is a valid non-negative millimeter distance or infinity."""
+    assert isfinite(value) or isinf(value)
+    assert value >= 0.0
 
 
 def _assert_visualizations_match_contract(
