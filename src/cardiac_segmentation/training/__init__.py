@@ -1,3 +1,4 @@
+from cardiac_segmentation.training.early_stopping_monitor import EarlyStoppingMonitor
 from cardiac_segmentation.training.patient_level_resume_training_experiment import (
     PatientLevelResumeTrainingExperiment,
 )
@@ -31,6 +32,7 @@ from cardiac_segmentation.training.single_patient_overfit_experiment import (
 )
 
 __all__ = [
+    "EarlyStoppingMonitor",
     "PatientLevelResumeTrainingExperiment",
     "PatientLevelTrainingExperiment",
     "ResumedSegmentationTrainingHistory",

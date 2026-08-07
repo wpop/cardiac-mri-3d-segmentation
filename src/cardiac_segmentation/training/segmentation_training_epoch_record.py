@@ -15,6 +15,9 @@ class SegmentationTrainingEpochRecord:
     validation_result: SegmentationEpochResult
     training_duration_seconds: float
     validation_duration_seconds: float
+    learning_rate: float
+    learning_rate_changed: bool = False
+    early_stopping_triggered: bool = False
 
     def __post_init__(self) -> None:
         """Validate epoch identity and timing values."""
@@ -30,3 +33,12 @@ class SegmentationTrainingEpochRecord:
 
         if not isfinite(self.validation_duration_seconds) or self.validation_duration_seconds < 0.0:
             raise ValueError("Validation duration must be finite and non-negative.")
+
+        if not isfinite(self.learning_rate) or self.learning_rate <= 0.0:
+            raise ValueError("Learning rate must be finite and strictly positive.")
+
+        if not isinstance(self.learning_rate_changed, bool):
+            raise TypeError("Learning-rate changed flag must be a boolean.")
+
+        if not isinstance(self.early_stopping_triggered, bool):
+            raise TypeError("Early-stopping triggered flag must be a boolean.")

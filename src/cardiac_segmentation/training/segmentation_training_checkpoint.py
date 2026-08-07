@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
+from typing import Any
 
 _EXPECTED_FORMAT_VERSION = 1
 
@@ -18,6 +19,8 @@ class SegmentationTrainingCheckpoint:
     validation_mean_dice: float
     included_class_indices: tuple[int, ...]
     validation_per_class_dice: tuple[float, ...]
+    scheduler_state_dict: dict[str, Any] | None = None
+    early_stopping_state_dict: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Validate checkpoint metadata without retaining model or optimizer state."""

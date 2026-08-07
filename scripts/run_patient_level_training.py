@@ -29,10 +29,23 @@ def _print_epoch_record(
         f"{record.training_result.dice_result.mean_dice:.6f}, "
         "validation mean foreground Dice="
         f"{record.validation_result.dice_result.mean_dice:.6f}, "
+        f"learning rate={record.learning_rate:.8f}, "
         f"training duration={record.training_duration_seconds:.2f}s, "
         f"validation duration={record.validation_duration_seconds:.2f}s",
         flush=True,
     )
+    if record.learning_rate_changed:
+        print(
+            f"Learning rate changed to {record.learning_rate:.8f} after epoch "
+            f"{record.epoch_number}.",
+            flush=True,
+        )
+    if record.early_stopping_triggered:
+        print(
+            "Early stopping terminated training after epoch "
+            f"{record.epoch_number}.",
+            flush=True,
+        )
 
 
 def main() -> None:
