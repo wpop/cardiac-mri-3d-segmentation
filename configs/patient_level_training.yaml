@@ -9,5 +9,9 @@ patient_level_training:
   base_channels: 8
   learning_rate: 0.001
   weight_decay: 0.00001
+  lr_scheduler_factor: 0.5
+  lr_scheduler_patience: 8
+  early_stopping_patience: 20
+  early_stopping_minimum_improvement: 0.001
   device: auto
   checkpoint_path: artifacts/checkpoints/patient_level_training.pt

@@ -15,6 +15,9 @@ from cardiac_segmentation.data import (
 )
 from cardiac_segmentation.losses import CrossEntropyDiceLoss3D
 from cardiac_segmentation.models import CompactUNet3D
+from cardiac_segmentation.training.early_stopping_monitor import (
+    EarlyStoppingMonitor,
+)
 from cardiac_segmentation.training.segmentation_epoch_runner import (
     SegmentationEpochRunner,
 )
@@ -103,6 +106,18 @@ class PatientLevelTrainingExperiment:
             lr=self._training_config.learning_rate,
             weight_decay=self._training_config.weight_decay,
         )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="max",
+            factor=self._training_config.lr_scheduler_factor,
+            patience=self._training_config.lr_scheduler_patience,
+        )
+        early_stopping_monitor = EarlyStoppingMonitor(
+            patience=self._training_config.early_stopping_patience,
+            minimum_improvement=(
+                self._training_config.early_stopping_minimum_improvement
+            ),
+        )
         epoch_runner = SegmentationEpochRunner(
             model=model,
             loss_function=CrossEntropyDiceLoss3D(
@@ -120,6 +135,8 @@ class PatientLevelTrainingExperiment:
             model=model,
             optimizer=optimizer,
             epoch_runner=epoch_runner,
+            scheduler=scheduler,
+            early_stopping_monitor=early_stopping_monitor,
         )
 
         return trainer.fit(

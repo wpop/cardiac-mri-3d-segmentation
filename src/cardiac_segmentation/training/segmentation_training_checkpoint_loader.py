@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final, cast
 
 import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from cardiac_segmentation.training.segmentation_training_checkpoint import (
     SegmentationTrainingCheckpoint,
@@ -30,6 +31,12 @@ class SegmentationTrainingCheckpointLoader:
             "validation_per_class_dice",
         }
     )
+    _OPTIONAL_CHECKPOINT_KEYS: Final[frozenset[str]] = frozenset(
+        {
+            "scheduler_state_dict",
+            "early_stopping_state_dict",
+        }
+    )
 
     def load_into(
         self,
@@ -37,6 +44,7 @@ class SegmentationTrainingCheckpointLoader:
         model: nn.Module,
         optimizer: Optimizer,
         device: torch.device,
+        scheduler: ReduceLROnPlateau | None = None,
     ) -> SegmentationTrainingCheckpoint:
         """Load checkpoint state into the supplied model and optimizer."""
         resolved_checkpoint_path = checkpoint_path.expanduser().resolve(strict=False)
@@ -64,6 +72,22 @@ class SegmentationTrainingCheckpointLoader:
             strict=True,
         )
         optimizer.load_state_dict(dict(optimizer_state_dict))
+        scheduler_state_dict = self._optional_mapping(
+            checkpoint_payload,
+            key="scheduler_state_dict",
+        )
+        early_stopping_state_dict = self._optional_mapping(
+            checkpoint_payload,
+            key="early_stopping_state_dict",
+        )
+
+        if scheduler is not None and scheduler_state_dict is not None:
+            scheduler_load_state_dict = cast(
+                Callable[[dict[str, Any]], None],
+                scheduler.load_state_dict,
+            )
+            scheduler_load_state_dict(dict(scheduler_state_dict))
+
         self._validate_model_parameters(
             model=model,
             device=device,
@@ -98,6 +122,14 @@ class SegmentationTrainingCheckpointLoader:
                 checkpoint_payload,
                 "validation_per_class_dice",
             ),
+            scheduler_state_dict=(
+                None if scheduler_state_dict is None else dict(scheduler_state_dict)
+            ),
+            early_stopping_state_dict=(
+                None
+                if early_stopping_state_dict is None
+                else dict(early_stopping_state_dict)
+            ),
         )
 
     def _load_checkpoint_payload(
@@ -117,7 +149,7 @@ class SegmentationTrainingCheckpointLoader:
         )
         actual_keys = set(checkpoint_payload)
         missing_keys = self._CHECKPOINT_KEYS - actual_keys
-        unknown_keys = actual_keys - self._CHECKPOINT_KEYS
+        unknown_keys = actual_keys - self._CHECKPOINT_KEYS - self._OPTIONAL_CHECKPOINT_KEYS
 
         if missing_keys:
             formatted_keys = ", ".join(sorted(missing_keys))
@@ -128,6 +160,21 @@ class SegmentationTrainingCheckpointLoader:
             raise ValueError(f"Checkpoint contains unknown keys: {formatted_keys}")
 
         return dict(checkpoint_payload)
+
+    def _optional_mapping(
+        self,
+        checkpoint_payload: Mapping[str, object],
+        *,
+        key: str,
+    ) -> Mapping[str, Any] | None:
+        """Return an optional checkpoint mapping when present."""
+        if key not in checkpoint_payload:
+            return None
+
+        return self._require_mapping(
+            checkpoint_payload[key],
+            key=key,
+        )
 
     @staticmethod
     def _require_mapping(

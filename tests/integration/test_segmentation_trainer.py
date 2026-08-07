@@ -17,6 +17,7 @@ from cardiac_segmentation.data import (
 from cardiac_segmentation.losses import CrossEntropyDiceLoss3D
 from cardiac_segmentation.models import CompactUNet3D
 from cardiac_segmentation.training import (
+    EarlyStoppingMonitor,
     SegmentationEpochRunner,
     SegmentationTrainer,
     SegmentationTrainingEpochRecord,
@@ -58,6 +59,16 @@ def test_segmentation_trainer_records_history_and_saves_best_checkpoint(
         lr=_LEARNING_RATE,
         weight_decay=_WEIGHT_DECAY,
     )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=0.5,
+        patience=8,
+    )
+    early_stopping_monitor = EarlyStoppingMonitor(
+        patience=20,
+        minimum_improvement=0.001,
+    )
     epoch_runner = SegmentationEpochRunner(
         model=model,
         loss_function=CrossEntropyDiceLoss3D(
@@ -75,6 +86,8 @@ def test_segmentation_trainer_records_history_and_saves_best_checkpoint(
         model=model,
         optimizer=optimizer,
         epoch_runner=epoch_runner,
+        scheduler=scheduler,
+        early_stopping_monitor=early_stopping_monitor,
     )
     checkpoint_path = tmp_path / "best_segmentation_checkpoint.pt"
 
@@ -156,6 +169,9 @@ def _assert_epoch_record_matches_contract(
     assert 0.0 <= record.validation_result.dice_result.mean_dice <= 1.0
     assert record.training_duration_seconds >= 0.0
     assert record.validation_duration_seconds >= 0.0
+    assert record.learning_rate == pytest.approx(_LEARNING_RATE)
+    assert record.learning_rate_changed is False
+    assert record.early_stopping_triggered is False
 
 
 def _assert_checkpoint_matches_contract(
@@ -176,6 +192,8 @@ def _assert_checkpoint_matches_contract(
         "epoch_number",
         "model_state_dict",
         "optimizer_state_dict",
+        "scheduler_state_dict",
+        "early_stopping_state_dict",
         "training_average_loss",
         "validation_average_loss",
         "training_mean_dice",

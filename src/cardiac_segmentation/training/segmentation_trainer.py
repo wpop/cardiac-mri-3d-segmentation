@@ -3,13 +3,17 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
+from cardiac_segmentation.training.early_stopping_monitor import (
+    EarlyStoppingMonitor,
+)
 from cardiac_segmentation.training.resumed_segmentation_training_history import (
     ResumedSegmentationTrainingHistory,
 )
@@ -35,8 +39,10 @@ class SegmentationTrainer:
         model: nn.Module,
         optimizer: Optimizer,
         epoch_runner: SegmentationEpochRunner,
+        scheduler: ReduceLROnPlateau,
+        early_stopping_monitor: EarlyStoppingMonitor,
     ) -> None:
-        """Initialize model, optimizer, and single-epoch runner."""
+        """Initialize model, optimizer, scheduler, stop monitor, and epoch runner."""
         self._validate_model_and_optimizer(
             model=model,
             optimizer=optimizer,
@@ -45,6 +51,8 @@ class SegmentationTrainer:
         self._model = model
         self._optimizer = optimizer
         self._epoch_runner = epoch_runner
+        self._scheduler = scheduler
+        self._early_stopping_monitor = early_stopping_monitor
 
     def fit(
         self,
@@ -68,12 +76,23 @@ class SegmentationTrainer:
             validation_start_time = time.perf_counter()
             validation_result = self._epoch_runner.validate_epoch(validation_loader)
             validation_duration_seconds = time.perf_counter() - validation_start_time
+            validation_mean_dice = validation_result.dice_result.mean_dice
+            learning_rate_before_scheduler = self._get_learning_rate()
+            self._scheduler.step(validation_mean_dice)
+            learning_rate = self._get_learning_rate()
+            learning_rate_changed = learning_rate != learning_rate_before_scheduler
+            early_stopping_triggered = self._early_stopping_monitor.step(
+                validation_mean_dice
+            )
             epoch_record = SegmentationTrainingEpochRecord(
                 epoch_number=epoch_number,
                 training_result=training_result,
                 validation_result=validation_result,
                 training_duration_seconds=training_duration_seconds,
                 validation_duration_seconds=validation_duration_seconds,
+                learning_rate=learning_rate,
+                learning_rate_changed=learning_rate_changed,
+                early_stopping_triggered=early_stopping_triggered,
             )
             epoch_records.append(epoch_record)
 
@@ -89,6 +108,9 @@ class SegmentationTrainer:
                     epoch_record=epoch_record,
                     checkpoint_path=resolved_checkpoint_path,
                 )
+
+            if early_stopping_triggered:
+                break
 
         if best_record is None:
             raise RuntimeError("Training did not produce any epoch records.")
@@ -125,6 +147,7 @@ class SegmentationTrainer:
         best_epoch_number = checkpoint.epoch_number
         best_validation_mean_dice = checkpoint.validation_mean_dice
         best_validation_average_loss = checkpoint.validation_average_loss
+        self._restore_control_state(checkpoint)
 
         for epoch_number in range(checkpoint.epoch_number + 1, final_epoch_number + 1):
             training_start_time = time.perf_counter()
@@ -134,12 +157,23 @@ class SegmentationTrainer:
             validation_start_time = time.perf_counter()
             validation_result = self._epoch_runner.validate_epoch(validation_loader)
             validation_duration_seconds = time.perf_counter() - validation_start_time
+            validation_mean_dice = validation_result.dice_result.mean_dice
+            learning_rate_before_scheduler = self._get_learning_rate()
+            self._scheduler.step(validation_mean_dice)
+            learning_rate = self._get_learning_rate()
+            learning_rate_changed = learning_rate != learning_rate_before_scheduler
+            early_stopping_triggered = self._early_stopping_monitor.step(
+                validation_mean_dice
+            )
             epoch_record = SegmentationTrainingEpochRecord(
                 epoch_number=epoch_number,
                 training_result=training_result,
                 validation_result=validation_result,
                 training_duration_seconds=training_duration_seconds,
                 validation_duration_seconds=validation_duration_seconds,
+                learning_rate=learning_rate,
+                learning_rate_changed=learning_rate_changed,
+                early_stopping_triggered=early_stopping_triggered,
             )
             epoch_records.append(epoch_record)
 
@@ -158,6 +192,9 @@ class SegmentationTrainer:
                     epoch_record=epoch_record,
                     checkpoint_path=resolved_checkpoint_path,
                 )
+
+            if early_stopping_triggered:
+                break
 
         return ResumedSegmentationTrainingHistory(
             resumed_from_epoch_number=checkpoint.epoch_number,
@@ -308,6 +345,8 @@ class SegmentationTrainer:
             "epoch_number": epoch_record.epoch_number,
             "model_state_dict": self._model.state_dict(),
             "optimizer_state_dict": self._optimizer.state_dict(),
+            "scheduler_state_dict": self._scheduler_state_dict(),
+            "early_stopping_state_dict": self._early_stopping_monitor.state_dict(),
             "training_average_loss": epoch_record.training_result.average_loss,
             "validation_average_loss": epoch_record.validation_result.average_loss,
             "training_mean_dice": epoch_record.training_result.dice_result.mean_dice,
@@ -315,6 +354,48 @@ class SegmentationTrainer:
             "included_class_indices": validation_dice_result.included_class_indices,
             "validation_per_class_dice": validation_dice_result.per_class_dice,
         }
+
+    def _restore_control_state(
+        self,
+        checkpoint: SegmentationTrainingCheckpoint,
+    ) -> None:
+        """Restore scheduler and early-stopping state or seed from old metadata."""
+        if checkpoint.scheduler_state_dict is not None:
+            scheduler_load_state_dict = cast(
+                Callable[[dict[str, Any]], None],
+                self._scheduler.load_state_dict,
+            )
+            scheduler_load_state_dict(checkpoint.scheduler_state_dict)
+        else:
+            self._scheduler.step(checkpoint.validation_mean_dice)
+
+        if checkpoint.early_stopping_state_dict is not None:
+            self._early_stopping_monitor.load_state_dict(
+                checkpoint.early_stopping_state_dict
+            )
+        elif self._early_stopping_monitor.best_metric is None:
+            self._early_stopping_monitor.best_metric = checkpoint.validation_mean_dice
+
+    def _get_learning_rate(self) -> float:
+        """Return the single learning rate used by all optimizer parameter groups."""
+        learning_rates = {
+            float(parameter_group["lr"])
+            for parameter_group in self._optimizer.param_groups
+        }
+
+        if len(learning_rates) != 1:
+            raise ValueError("All optimizer parameter groups must share one learning rate.")
+
+        return next(iter(learning_rates))
+
+    def _scheduler_state_dict(self) -> dict[str, Any]:
+        """Return the scheduler state through a typed boundary."""
+        scheduler_state_dict = cast(
+            Callable[[], dict[str, Any]],
+            self._scheduler.state_dict,
+        )
+
+        return scheduler_state_dict()
 
     @staticmethod
     def _validate_model_and_optimizer(

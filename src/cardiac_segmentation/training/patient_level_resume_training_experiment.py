@@ -16,6 +16,9 @@ from cardiac_segmentation.data import (
 )
 from cardiac_segmentation.losses import CrossEntropyDiceLoss3D
 from cardiac_segmentation.models import CompactUNet3D
+from cardiac_segmentation.training.early_stopping_monitor import (
+    EarlyStoppingMonitor,
+)
 from cardiac_segmentation.training.resumed_segmentation_training_history import (
     ResumedSegmentationTrainingHistory,
 )
@@ -120,11 +123,18 @@ class PatientLevelResumeTrainingExperiment:
             lr=self._resume_config.learning_rate,
             weight_decay=self._resume_config.weight_decay,
         )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="max",
+            factor=self._resume_config.lr_scheduler_factor,
+            patience=self._resume_config.lr_scheduler_patience,
+        )
         checkpoint = SegmentationTrainingCheckpointLoader().load_into(
             checkpoint_path=self._resume_config.resume_checkpoint_path,
             model=model,
             optimizer=optimizer,
             device=self._device,
+            scheduler=scheduler,
         )
 
         if checkpoint.epoch_number >= self._resume_config.final_epoch_number:
@@ -145,10 +155,18 @@ class PatientLevelResumeTrainingExperiment:
             device=self._device,
             include_background_in_dice=False,
         )
+        early_stopping_monitor = EarlyStoppingMonitor(
+            patience=self._resume_config.early_stopping_patience,
+            minimum_improvement=(
+                self._resume_config.early_stopping_minimum_improvement
+            ),
+        )
         trainer = SegmentationTrainer(
             model=model,
             optimizer=optimizer,
             epoch_runner=epoch_runner,
+            scheduler=scheduler,
+            early_stopping_monitor=early_stopping_monitor,
         )
 
         return trainer.resume_fit(

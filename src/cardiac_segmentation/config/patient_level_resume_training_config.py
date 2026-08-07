@@ -20,6 +20,10 @@ class PatientLevelResumeTrainingConfig:
     device: str
     resume_checkpoint_path: Path
     checkpoint_path: Path
+    lr_scheduler_factor: float = 0.5
+    lr_scheduler_patience: int = 8
+    early_stopping_patience: int = 20
+    early_stopping_minimum_improvement: float = 0.001
 
     def __post_init__(self) -> None:
         """Validate all resumed patient-level training settings."""
@@ -88,6 +92,26 @@ class PatientLevelResumeTrainingConfig:
         if self.checkpoint_path.is_dir():
             raise IsADirectoryError(
                 f"Checkpoint path must not be an existing directory: {self.checkpoint_path}"
+            )
+
+        if not isfinite(self.lr_scheduler_factor) or not 0.0 < self.lr_scheduler_factor < 1.0:
+            raise ValueError("LR scheduler factor must be finite and inside (0.0, 1.0).")
+
+        self._validate_positive_integer(
+            self.lr_scheduler_patience,
+            name="LR scheduler patience",
+        )
+        self._validate_positive_integer(
+            self.early_stopping_patience,
+            name="Early-stopping patience",
+        )
+
+        if (
+            not isfinite(self.early_stopping_minimum_improvement)
+            or self.early_stopping_minimum_improvement < 0.0
+        ):
+            raise ValueError(
+                "Early-stopping minimum improvement must be finite and non-negative."
             )
 
     @staticmethod
