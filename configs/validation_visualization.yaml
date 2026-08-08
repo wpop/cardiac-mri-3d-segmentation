@@ -1,0 +1,12 @@
+validation_visualization:
+  patient_count: 100
+  validation_fraction: 0.2
+  random_seed: 42
+  base_channels: 8
+  device: auto
+  checkpoint_path: artifacts/checkpoints/final_patient_level_training.pt
+  output_dir: artifacts/visualizations/validation_slice_review
+  report_csv_path: artifacts/reports/final_dice_hd95_validation.csv
+  report_json_path: artifacts/reports/final_dice_hd95_validation_summary.json
+  export_case_count: 3
+  slices_per_case: 3
