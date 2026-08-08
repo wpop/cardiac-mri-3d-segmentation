@@ -96,6 +96,8 @@ artifacts/dataset_inspection/*
 
 # Generated images and videos
 *.png
+!docs/images/
+!docs/images/*.png
 *.jpg
 *.jpeg
 *.gif
