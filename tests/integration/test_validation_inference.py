@@ -5,6 +5,8 @@ from math import isfinite, isinf
 from pathlib import Path
 from typing import Any, Final
 
+import nibabel as nib
+import numpy as np
 import torch
 
 from cardiac_segmentation.config import (
@@ -12,6 +14,7 @@ from cardiac_segmentation.config import (
     PatientLevelTrainingConfigLoader,
     ValidationInferenceConfig,
 )
+from cardiac_segmentation.data import AcdcDatasetIndexer, AcdcInfoParser, AcdcPatientCase
 from cardiac_segmentation.evaluation import ValidationInferenceExperiment
 from cardiac_segmentation.training import PatientLevelTrainingExperiment
 
@@ -67,6 +70,7 @@ def test_validation_inference_uses_real_acdc_validation_split(
         csv_report_path=tmp_path / "validation_inference.csv",
         json_report_path=tmp_path / "validation_inference_summary.json",
         visualization_dir=tmp_path / "visualizations",
+        original_nifti_prediction_dir=tmp_path / "original_nifti_predictions",
     )
     experiment = ValidationInferenceExperiment(
         app_config=app_config,
@@ -97,6 +101,11 @@ def test_validation_inference_uses_real_acdc_validation_split(
     _assert_csv_matches_contract(inference_config.csv_report_path)
     _assert_json_matches_contract(inference_config.json_report_path)
     _assert_visualizations_match_contract(report.visualization_paths)
+    _assert_original_nifti_predictions_match_contract(
+        prediction_dir=inference_config.original_nifti_prediction_dir,
+        case_results=report.case_results,
+        dataset_root=app_config.dataset.root_dir,
+    )
 
 
 def _assert_normalized_dice(
@@ -193,3 +202,58 @@ def _assert_visualizations_match_contract(
         assert path.is_file()
         assert path.suffix == ".png"
         assert path.stat().st_size > 0
+
+
+def _assert_original_nifti_predictions_match_contract(
+    *,
+    prediction_dir: Path | None,
+    case_results: tuple[Any, ...],
+    dataset_root: Path,
+) -> None:
+    """Verify exported prediction NIfTI files match original image geometry."""
+    assert prediction_dir is not None
+    patient_cases = {
+        patient_case.patient_id: patient_case
+        for patient_case in AcdcDatasetIndexer(
+            dataset_root=dataset_root,
+            info_parser=AcdcInfoParser(),
+        ).index()
+    }
+
+    for result in case_results:
+        prediction_path = prediction_dir / f"{result.volume_id}_prediction.nii.gz"
+        original_image_path = _original_image_path_for_volume(
+            patient_cases=patient_cases,
+            volume_id=result.volume_id,
+        )
+        prediction_image = nib.load(str(prediction_path))
+        original_image = nib.load(str(original_image_path))
+
+        assert prediction_path.is_file()
+        assert prediction_image.shape == original_image.shape
+        assert np.allclose(prediction_image.affine, original_image.affine)
+        assert np.allclose(
+            prediction_image.header.get_zooms()[:3],
+            original_image.header.get_zooms()[:3],
+        )
+        assert set(np.unique(np.asarray(prediction_image.dataobj))).issubset(
+            {0, 1, 2, 3}
+        )
+
+
+def _original_image_path_for_volume(
+    *,
+    patient_cases: dict[str, AcdcPatientCase],
+    volume_id: str,
+) -> Path:
+    """Return the original ACDC image path for a patient phase identifier."""
+    patient_id, phase_name = volume_id.split("_")
+    patient_case = patient_cases[patient_id]
+
+    if phase_name == "ED":
+        return patient_case.ed_image_path
+
+    if phase_name == "ES":
+        return patient_case.es_image_path
+
+    raise ValueError(f"Unsupported ACDC phase name: {phase_name}")

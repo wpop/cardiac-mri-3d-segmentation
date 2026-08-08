@@ -1,3 +1,6 @@
+from cardiac_segmentation.evaluation.original_nifti_prediction_exporter import (
+    OriginalNiftiPredictionExporter,
+)
 from cardiac_segmentation.evaluation.validation_inference_case_result import (
     ValidationInferenceCaseResult,
 )
@@ -9,6 +12,7 @@ from cardiac_segmentation.evaluation.validation_inference_report import (
 )
 
 __all__ = [
+    "OriginalNiftiPredictionExporter",
     "ValidationInferenceCaseResult",
     "ValidationInferenceExperiment",
     "ValidationInferenceReport",
