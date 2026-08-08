@@ -11,3 +11,4 @@ validation_inference:
   csv_report_path: artifacts/reports/validation_inference.csv
   json_report_path: artifacts/reports/validation_inference_summary.json
   visualization_dir: artifacts/visualizations
+  original_nifti_prediction_dir: artifacts/predictions/original_nifti

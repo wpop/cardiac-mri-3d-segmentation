@@ -19,6 +19,7 @@ class ValidationInferenceConfig:
     csv_report_path: Path
     json_report_path: Path
     visualization_dir: Path
+    original_nifti_prediction_dir: Path | None = None
 
     def __post_init__(self) -> None:
         """Validate all validation inference settings."""
@@ -69,6 +70,15 @@ class ValidationInferenceConfig:
         if self.json_report_path.is_dir():
             raise IsADirectoryError(
                 f"JSON report path must not be an existing directory: {self.json_report_path}"
+            )
+
+        if (
+            self.original_nifti_prediction_dir is not None
+            and self.original_nifti_prediction_dir.is_file()
+        ):
+            raise NotADirectoryError(
+                "Original-space prediction path must not be an existing file: "
+                f"{self.original_nifti_prediction_dir}"
             )
 
     @staticmethod

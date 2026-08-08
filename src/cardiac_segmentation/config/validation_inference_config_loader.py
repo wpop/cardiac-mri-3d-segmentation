@@ -14,7 +14,7 @@ class ValidationInferenceConfigLoader:
     """Load and validate a validation inference report configuration."""
 
     _ROOT_KEYS: Final[frozenset[str]] = frozenset({"validation_inference"})
-    _SECTION_KEYS: Final[frozenset[str]] = frozenset(
+    _REQUIRED_SECTION_KEYS: Final[frozenset[str]] = frozenset(
         {
             "patient_count",
             "validation_fraction",
@@ -29,6 +29,9 @@ class ValidationInferenceConfigLoader:
             "json_report_path",
             "visualization_dir",
         }
+    )
+    _OPTIONAL_SECTION_KEYS: Final[frozenset[str]] = frozenset(
+        {"original_nifti_prediction_dir"}
     )
 
     def __init__(
@@ -62,10 +65,8 @@ class ValidationInferenceConfigLoader:
             context="Configuration root",
         )
         section = self._require_section(root)
-        AppConfigLoader._validate_keys(
+        self._validate_section_keys(
             section,
-            expected_keys=self._SECTION_KEYS,
-            context="Validation inference configuration",
         )
 
         return ValidationInferenceConfig(
@@ -116,6 +117,10 @@ class ValidationInferenceConfigLoader:
                     "visualization_dir",
                     context="Validation inference configuration",
                 )
+            ),
+            original_nifti_prediction_dir=self._resolve_optional_project_path(
+                section,
+                "original_nifti_prediction_dir",
             ),
         )
 
@@ -177,3 +182,44 @@ class ValidationInferenceConfigLoader:
             candidate = self._project_root / candidate
 
         return candidate.resolve(strict=False)
+
+    def _resolve_optional_project_path(
+        self,
+        section: Mapping[str, object],
+        key: str,
+    ) -> Path | None:
+        """Resolve an optional configured path relative to the project root."""
+        if key not in section:
+            return None
+
+        return self._resolve_project_path(
+            AppConfigLoader._require_string(
+                section,
+                key,
+                context="Validation inference configuration",
+            )
+        )
+
+    def _validate_section_keys(
+        self,
+        section: Mapping[str, object],
+    ) -> None:
+        """Validate required and optional validation inference keys."""
+        actual_keys = set(section)
+        missing_keys = self._REQUIRED_SECTION_KEYS - actual_keys
+        allowed_keys = self._REQUIRED_SECTION_KEYS | self._OPTIONAL_SECTION_KEYS
+        unknown_keys = actual_keys - allowed_keys
+
+        if missing_keys:
+            formatted_keys = ", ".join(sorted(missing_keys))
+            raise ValueError(
+                "Validation inference configuration is missing required keys: "
+                f"{formatted_keys}"
+            )
+
+        if unknown_keys:
+            formatted_keys = ", ".join(sorted(unknown_keys))
+            raise ValueError(
+                "Validation inference configuration contains unknown keys: "
+                f"{formatted_keys}"
+            )

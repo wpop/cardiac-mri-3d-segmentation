@@ -22,6 +22,9 @@ from cardiac_segmentation.data import (
     AcdcInfoParser,
     AcdcPatientCase,
 )
+from cardiac_segmentation.evaluation.original_nifti_prediction_exporter import (
+    OriginalNiftiPredictionExporter,
+)
 from cardiac_segmentation.evaluation.validation_inference_case_result import (
     ValidationInferenceCaseResult,
 )
@@ -117,6 +120,7 @@ class ValidationInferenceExperiment:
             model=model,
             validation_loader=data_loaders.validation_loader,
         )
+        self._write_original_nifti_predictions(case_payloads)
         case_results = tuple(payload["case_result"] for payload in case_payloads)
         csv_path = self._write_csv(case_results)
         summary_path = self._write_summary_json(
@@ -153,6 +157,8 @@ class ValidationInferenceExperiment:
                 for batch_index in range(int(images.shape[0])):
                     patient_id = self._extract_metadata(batch["patient_id"], batch_index)
                     phase_name = self._extract_metadata(batch["phase_name"], batch_index)
+                    image_path = self._extract_path_metadata(batch["image_path"], batch_index)
+                    mask_path = self._extract_path_metadata(batch["mask_path"], batch_index)
                     volume_id = f"{patient_id}_{phase_name}"
                     case_result = self._calculate_case_result(
                         logits=logits[batch_index : batch_index + 1],
@@ -167,6 +173,8 @@ class ValidationInferenceExperiment:
                             "image": images[batch_index, 0].detach().cpu(),
                             "mask": masks[batch_index].detach().cpu(),
                             "prediction": predictions[batch_index].detach().cpu(),
+                            "image_path": image_path,
+                            "mask_path": mask_path,
                         }
                     )
 
@@ -370,6 +378,31 @@ class ValidationInferenceExperiment:
             paths[2],
         )
 
+    def _write_original_nifti_predictions(
+        self,
+        case_payloads: tuple[dict[str, Any], ...],
+    ) -> None:
+        """Write original-space NIfTI prediction labels when configured."""
+        output_dir = self._inference_config.original_nifti_prediction_dir
+
+        if output_dir is None:
+            return
+
+        exporter = OriginalNiftiPredictionExporter(
+            preprocessing_config=self._app_config.preprocessing,
+            validation_config=self._app_config.validation,
+        )
+
+        for payload in case_payloads:
+            case_result = cast(ValidationInferenceCaseResult, payload["case_result"])
+            prediction = cast(Tensor, payload["prediction"])
+            exporter.export(
+                prediction_dhw=prediction.numpy().astype("int64", copy=False),
+                image_path=cast(Path, payload["image_path"]),
+                mask_path=cast(Path, payload["mask_path"]),
+                output_path=output_dir / f"{case_result.volume_id}_prediction.nii.gz",
+            )
+
     def _write_case_visualization(
         self,
         *,
@@ -517,6 +550,15 @@ class ValidationInferenceExperiment:
             return item
 
         raise TypeError("Batch metadata must be a string or sequence of strings.")
+
+    @classmethod
+    def _extract_path_metadata(
+        cls,
+        value: object,
+        batch_index: int,
+    ) -> Path:
+        """Extract a path metadata value from a collated DataLoader batch."""
+        return Path(cls._extract_metadata(value, batch_index))
 
     @staticmethod
     def _aggregate(
