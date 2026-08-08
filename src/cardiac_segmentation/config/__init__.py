@@ -28,6 +28,12 @@ from cardiac_segmentation.config.validation_inference_config import (
 from cardiac_segmentation.config.validation_inference_config_loader import (
     ValidationInferenceConfigLoader,
 )
+from cardiac_segmentation.config.validation_visualization_config import (
+    ValidationVisualizationConfig,
+)
+from cardiac_segmentation.config.validation_visualization_config_loader import (
+    ValidationVisualizationConfigLoader,
+)
 
 __all__ = [
     "AppConfig",
@@ -44,4 +50,6 @@ __all__ = [
     "ValidationConfig",
     "ValidationInferenceConfig",
     "ValidationInferenceConfigLoader",
+    "ValidationVisualizationConfig",
+    "ValidationVisualizationConfigLoader",
 ]

@@ -10,10 +10,18 @@ from cardiac_segmentation.evaluation.validation_inference_experiment import (
 from cardiac_segmentation.evaluation.validation_inference_report import (
     ValidationInferenceReport,
 )
+from cardiac_segmentation.evaluation.validation_visualization_case_result import (
+    ValidationVisualizationCaseResult,
+)
+from cardiac_segmentation.evaluation.validation_visualization_experiment import (
+    ValidationVisualizationExperiment,
+)
 
 __all__ = [
     "OriginalNiftiPredictionExporter",
     "ValidationInferenceCaseResult",
     "ValidationInferenceExperiment",
     "ValidationInferenceReport",
+    "ValidationVisualizationCaseResult",
+    "ValidationVisualizationExperiment",
 ]
